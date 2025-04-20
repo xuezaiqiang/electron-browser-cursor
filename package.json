@@ -1,0 +1,61 @@
+{
+  "name": "electron-browser-cursor",
+  "version": "1.0.0",
+  "description": "一个基于Electron的浏览器应用",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "yarn build:electron && concurrently \"yarn dev:vite\" \"yarn dev:electron\"",
+    "dev:vite": "vite --force",
+    "dev:electron": "cross-env IS_DEV=true electron .",
+    "build": "yarn build:vite && yarn build:electron",
+    "build:vite": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "package": "electron-builder build --win --mac --linux",
+    "package:win": "electron-builder build --win",
+    "package:mac": "electron-builder build --mac",
+    "package:linux": "electron-builder build --linux"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/electron": "^1.6.12",
+    "@types/node": "^22.14.1",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.1.5",
+    "electron-builder": "^26.0.12",
+    "electron-devtools-installer": "^4.0.0",
+    "electron-is-dev": "^3.0.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.1"
+  },
+  "build": {
+    "appId": "com.cursor.electron-browser",
+    "productName": "Electron Browser",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
+  }
+}

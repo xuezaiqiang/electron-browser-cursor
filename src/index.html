@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Electron 浏览器</title>
+  <script>
+    // 忽略Autofill警告
+    const originalConsoleError = console.error;
+    console.error = function(...args) {
+      const errorString = args.join(' ');
+      if (errorString.includes('Autofill.enable') || errorString.includes('Autofill.setAddresses')) {
+        // 忽略这些特定的警告
+        return;
+      }
+      originalConsoleError.apply(this, args);
+    };
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/src/renderer/main.ts"></script>
+</body>
+</html> 

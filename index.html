@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Electron浏览器</title>
+  <link rel="stylesheet" href="/src/renderer/style.css">
+</head>
+<body>
+  <div class="browser-container">
+    <div class="browser-toolbar">
+      <div class="navigation-buttons">
+        <button id="back-button" title="后退"><span class="icon">&#8592;</span></button>
+        <button id="forward-button" title="前进"><span class="icon">&#8594;</span></button>
+        <button id="refresh-button" title="刷新"><span class="icon">&#8635;</span></button>
+      </div>
+      <div class="address-bar">
+        <input type="text" id="url-input" placeholder="输入网址...">
+        <button id="go-button" title="转到"><span class="icon">&#8680;</span></button>
+      </div>
+      <div class="browser-actions">
+        <button id="bookmark-button" title="添加到书签"><span class="icon">&#9733;</span></button>
+        <button id="private-button" title="隐私浏览"><span class="icon">&#128274;</span></button>
+        <button id="settings-button" title="设置"><span class="icon">&#9881;</span></button>
+      </div>
+    </div>
+    <div class="tabs-container">
+      <div class="tab-list" id="tab-list">
+        <!-- 标签页将在这里动态生成 -->
+      </div>
+    </div>
+    <div class="webview-container" id="webview-container">
+      <!-- webview将在这里动态生成 -->
+    </div>
+  </div>
+  <script type="module" src="/src/renderer/index.ts"></script>
+</body>
+</html> 
