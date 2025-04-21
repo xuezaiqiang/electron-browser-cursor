@@ -30,6 +30,9 @@ export interface BrowserSettings {
     server: string;
     port: number;
   };
+  
+  // 链接行为
+  linkBehavior: 'new-tab' | 'current-tab' | 'new-window';
 }
 
 // 默认设置值
@@ -53,7 +56,10 @@ const DEFAULT_SETTINGS: BrowserSettings = {
     enabled: false,
     server: '',
     port: 0
-  }
+  },
+  
+  // 链接行为默认设置为在新标签页中打开
+  linkBehavior: 'new-tab'
 };
 
 export class SettingsManager {
@@ -63,7 +69,8 @@ export class SettingsManager {
   
   constructor() {
     // 初始化默认下载路径
-    const defaultSettings = { ...DEFAULT_SETTINGS };
+    const defaultSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    console.log('默认链接行为设置:', defaultSettings.linkBehavior);
     
     // 尝试从localStorage加载设置
     try {
@@ -77,6 +84,8 @@ export class SettingsManager {
       console.error('加载设置出错:', error);
       this.settings = defaultSettings;
     }
+    
+    console.log('初始化完成后的链接行为设置:', this.settings.linkBehavior);
     
     // 请求默认下载路径
     this.requestDefaultDownloadPath();
@@ -113,6 +122,7 @@ export class SettingsManager {
    * 获取所有设置
    */
   getSettings(): BrowserSettings {
+    console.log('获取设置:', this.settings);
     return { ...this.settings };
   }
   
@@ -120,6 +130,8 @@ export class SettingsManager {
    * 更新设置
    */
   updateSettings(newSettings: Partial<BrowserSettings>): void {
+    console.log('更新设置:', newSettings);
+    
     this.settings = {
       ...this.settings,
       ...newSettings
@@ -133,6 +145,7 @@ export class SettingsManager {
       };
     }
     
+    console.log('更新后的设置:', this.settings);
     this.saveSettings();
   }
   
@@ -140,7 +153,19 @@ export class SettingsManager {
    * 重置设置为默认值
    */
   resetSettings(): void {
+    console.log('重置所有设置到默认值');
+    // 清除存储
+    try {
+      localStorage.removeItem(SettingsManager.STORAGE_KEY);
+    } catch (error) {
+      console.error('清除设置存储出错:', error);
+    }
+    
+    // 设置为默认值
     this.settings = { ...DEFAULT_SETTINGS };
+    console.log('重置后的设置:', this.settings);
+    
+    // 保存设置
     this.saveSettings();
   }
   

@@ -6,6 +6,7 @@ import { HistoryManager } from './history-manager';
 import { DownloadManager } from './download-manager';
 import { SettingsManager } from './settings-manager';
 import * as PathHelper from './path-helper';
+import type { WebviewTag } from 'electron';
 
 // 从window对象获取预加载脚本中暴露的electron API
 const { ipcRenderer } = (window as any).electron || {
@@ -62,6 +63,17 @@ interface SessionData {
   tabGroups?: SessionTabGroup[];
 }
 
+interface MenuItem {
+  type?: 'separator';
+  text?: string;
+  callback?: () => void;
+}
+
+interface CustomNewWindowEvent extends Event {
+  url: string;
+  preventDefault: () => void;
+}
+
 class BrowserApp {
   private static readonly SESSION_STORAGE_KEY = 'electron-browser-session';
   private tabs: Tab[] = [];
@@ -92,6 +104,16 @@ class BrowserApp {
     
     // 恢复会话或根据设置决定启动页
     this.restoreSessionOrCreateNewTab();
+    
+    // 设置会话保存
+    this.setupSessionSaving();
+    
+    // 强制设置链接行为为新标签页，确保设置正确
+    console.log('初始化链接行为设置');
+    const settings = this.settingsManager.getSettings();
+    settings.linkBehavior = 'new-tab';
+    this.settingsManager.updateSettings({ linkBehavior: 'new-tab' });
+    console.log('设置链接行为为:', settings.linkBehavior);
   }
 
   private initEventListeners(): void {
@@ -117,6 +139,12 @@ class BrowserApp {
     // 隐私浏览按钮
     document.getElementById('private-button')?.addEventListener('click', () => this.createPrivateTab());
     
+    // 全局错误处理，防止未处理的 Promise 拒绝
+    window.addEventListener('unhandledrejection', (event) => {
+      console.error('未处理的 Promise 拒绝:', event.reason);
+      event.preventDefault();
+    });
+    
     // 主进程菜单事件监听
     ipcRenderer.on('show-history', () => this.showHistory());
     ipcRenderer.on('show-bookmarks', () => this.showBookmarks());
@@ -125,6 +153,23 @@ class BrowserApp {
     ipcRenderer.on('show-settings', () => this.showSettings());
     ipcRenderer.on('new-private-tab', () => this.createPrivateTab());
     ipcRenderer.on('restore-last-session', () => this.restoreSession());
+    
+    // 处理主进程发送的打开URL请求
+    ipcRenderer.on('open-url-in-new-tab', (_: any, url: string) => {
+      console.log('收到在新标签页打开URL请求:', url);
+      if (url && typeof url === 'string') {
+        this.createNewTab(url);
+      }
+    });
+    
+    // 从新窗口加载URL
+    ipcRenderer.on('load-url', (_: any, url: string) => {
+      console.log('收到load-url事件，URL:', url);
+      if (url) {
+        console.log('准备在新标签页中加载URL:', url);
+        this.createNewTab(url);
+      }
+    });
     
     // 设置会话保存
     this.setupSessionSaving();
@@ -262,6 +307,7 @@ class BrowserApp {
   }
 
   private createWebView(tab: Tab): void {
+    console.log('创建WebView，tab:', tab);
     // 隐藏所有webview
     Array.from(this.webviewContainer.children).forEach(child => {
       (child as HTMLElement).style.display = 'none';
@@ -272,19 +318,88 @@ class BrowserApp {
     
     if (!webview) {
       // 创建新webview
-      webview = document.createElement('webview');
+      webview = document.createElement('webview') as WebviewTag;
       webview.id = `webview-${tab.id}`;
       webview.className = 'browser-webview';
-      (webview as any).src = tab.url;
-      webview.setAttribute('nodeintegration', 'true');
+      webview.setAttribute('src', tab.url || '');
+      webview.setAttribute('partition', 'persist:main');
+      
+      // 关键配置
+      webview.setAttribute('webpreferences', 'contextIsolation=false,nodeIntegration=true');
+      
+      // 禁用原生窗口打开，我们将用自己的方式处理
+      webview.setAttribute('nativeWindowOpen', 'false');
+      webview.setAttribute('allowpopups', 'false');
       
       // 如果是隐私标签页，添加相关属性
       if (tab.isPrivate) {
         webview.classList.add('private-webview');
-        // 添加隐私模式相关设置
         webview.setAttribute('partition', `private-${tab.id}`);
-        webview.setAttribute('allowpopups', 'true');
       }
+      
+      // 在 DOM Ready 时注入 JavaScript 拦截 window.open
+      webview.addEventListener('dom-ready', () => {
+        console.log('Webview DOM 已加载，准备注入脚本:', tab.id);
+        
+        // 使用简单的脚本进行注入，避免任何序列化问题
+        const script = `
+          // 拦截 window.open
+          window.open = function(url) {
+            if (url) {
+              console.log('OPEN_URL:' + url);
+            }
+            // 返回一个简单对象
+            return {
+              closed: false,
+              close: function() {}
+            };
+          };
+          
+          // 拦截链接点击
+          document.addEventListener('click', function(e) {
+            var link = e.target;
+            while (link && link.tagName !== 'A') {
+              link = link.parentElement;
+            }
+            
+            if (link && link.target === '_blank') {
+              e.preventDefault();
+              console.log('OPEN_URL:' + link.href);
+            }
+          });
+          
+          console.log('注入脚本已完成');
+        `;
+        
+        // 执行脚本
+        try {
+          (webview as any).executeJavaScript(script);
+        } catch (error) {
+          console.error('注入脚本失败:', error);
+        }
+      });
+      
+      // 监听控制台消息，接收注入脚本的请求
+      webview.addEventListener('console-message', (e: any) => {
+        const message = e.message || '';
+        if (message.startsWith('OPEN_URL:')) {
+          const url = message.substring('OPEN_URL:'.length);
+          console.log('收到打开URL请求:', url);
+          if (url) {
+            this.createNewTab(url);
+          }
+        }
+      });
+      
+      // 作为备份，仍然监听 new-window 事件
+      webview.addEventListener('new-window', (e: any) => {
+        e.preventDefault();
+        const url = e.url;
+        console.log('拦截到 new-window 事件:', url);
+        if (url && url !== 'about:blank') {
+          this.createNewTab(url);
+        }
+      });
       
       // 监听webview事件
       webview.addEventListener('page-title-updated', (e: any) => {
@@ -310,11 +425,6 @@ class BrowserApp {
         this.updateBookmarkStatus();
       });
       
-      // 处理新窗口
-      webview.addEventListener('new-window', (e: any) => {
-        this.createNewTab(e.url);
-      });
-
       // 下载事件处理
       webview.addEventListener('will-download', (e: any) => {
         // 由主进程处理下载
@@ -508,7 +618,7 @@ class BrowserApp {
         tab.url = url;
         
         // 更新webview的URL
-        const webview = document.getElementById(`webview-${this.currentTabId}`) as any;
+        const webview = document.getElementById(`webview-${this.currentTabId}`) as WebviewTag;
         if (webview) {
           webview.src = url;
         }
@@ -516,9 +626,9 @@ class BrowserApp {
     }
   }
 
-  private getCurrentWebview(): any {
+  private getCurrentWebview(): WebviewTag | null {
     if (!this.currentTabId) return null;
-    return document.getElementById(`webview-${this.currentTabId}`);
+    return document.getElementById(`webview-${this.currentTabId}`) as WebviewTag;
   }
 
   private getCurrentUrl(): string {
@@ -1330,6 +1440,21 @@ class BrowserApp {
       }
     ]);
     
+    // 链接行为设置
+    this.addSettingsSection(form, '链接行为', [
+      {
+        type: 'select',
+        id: 'linkBehavior',
+        label: '点击链接时',
+        value: settings.linkBehavior,
+        options: [
+          { value: 'new-tab', label: '在新标签页中打开' },
+          { value: 'current-tab', label: '在当前页面打开' },
+          { value: 'new-window', label: '在新窗口中打开' }
+        ]
+      }
+    ]);
+    
     // 高级设置部分
     this.addSettingsSection(form, '高级设置', [
       {
@@ -1437,6 +1562,8 @@ class BrowserApp {
         showBookmarksBar: (document.getElementById('showBookmarksBar') as HTMLInputElement).checked,
         
         hardwareAcceleration: (document.getElementById('hardwareAcceleration') as HTMLInputElement).checked,
+        
+        linkBehavior: (document.getElementById('linkBehavior') as HTMLSelectElement).value as 'new-tab' | 'current-tab' | 'new-window',
         
         proxySettings: {
           enabled: (document.getElementById('proxyEnabled') as HTMLInputElement).checked,
@@ -1615,6 +1742,9 @@ class BrowserApp {
     if (bookmarksBar) {
       bookmarksBar.style.display = settings.showBookmarksBar ? 'flex' : 'none';
     }
+    
+    // 应用链接行为设置
+    console.log('应用链接行为设置:', settings.linkBehavior);
     
     // 应用代理设置
     if (settings.proxySettings.enabled) {
@@ -1884,7 +2014,7 @@ class BrowserApp {
     menu.style.top = `${event.pageY}px`;
     
     // 添加菜单项
-    const menuItems = [
+    const menuItems: MenuItem[] = [
       {
         text: '关闭标签页',
         callback: () => this.closeTab(tabId)
@@ -1918,18 +2048,18 @@ class BrowserApp {
       }
     ];
     
-    menuItems.forEach(item => {
+    menuItems.forEach((item: MenuItem) => {
       if (item.type === 'separator') {
         const separator = document.createElement('div');
         separator.className = 'menu-separator';
         menu.appendChild(separator);
-      } else {
+      } else if (item.text && item.callback) {
         const menuItem = document.createElement('div');
         menuItem.className = 'menu-item';
         menuItem.textContent = item.text;
         menuItem.addEventListener('click', () => {
           document.body.removeChild(menu);
-          item.callback();
+          item.callback?.();
         });
         menu.appendChild(menuItem);
       }

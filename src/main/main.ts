@@ -29,6 +29,19 @@ function createWindow() {
   
   mainWindow.loadURL(indexUrl);
 
+  // 设置窗口打开处理器 - 拦截所有 window.open 调用
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    console.log('拦截到窗口打开请求:', details.url);
+    
+    // 将 URL 发送到渲染进程，在新标签中打开
+    if (details.url && details.url !== 'about:blank') {
+      mainWindow?.webContents.send('open-url-in-new-tab', details.url);
+    }
+    
+    // 阻止默认行为
+    return { action: 'deny' };
+  });
+
   // 打开开发者工具
   if (isDev) {
     // 以非默认方式打开DevTools，减少警告
@@ -209,6 +222,8 @@ function createWindow() {
 
   const menu = Menu.buildFromTemplate(template as any);
   Menu.setApplicationMenu(menu);
+
+  return mainWindow;
 }
 
 // 当Electron完成初始化并准备创建浏览器窗口时调用此方法
@@ -232,8 +247,17 @@ app.on('window-all-closed', () => {
 });
 
 // 处理webview内容与主进程间的通信
-ipcMain.on('open-new-window', () => {
-  createWindow();
+ipcMain.on('open-new-window', (_, url) => {
+  console.log('主进程收到打开新窗口请求，URL:', url);
+  const win = createWindow();
+  // 如果提供了URL，在新窗口加载该URL
+  if (url && win) {
+    console.log('准备在新窗口加载URL:', url);
+    win.webContents.once('did-finish-load', () => {
+      console.log('新窗口加载完成，发送load-url事件');
+      win.webContents.send('load-url', url);
+    });
+  }
 });
 
 // 在默认浏览器中打开链接
