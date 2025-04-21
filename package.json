@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "一个基于Electron的浏览器应用",
   "main": "dist/main/main.js",
+  "type": "commonjs",
   "scripts": {
     "dev": "yarn build:electron && concurrently \"yarn dev:vite\" \"yarn dev:electron\"",
     "dev:vite": "vite --force",
@@ -18,7 +19,9 @@
   "keywords": [],
   "author": "",
   "license": "MIT",
-  "dependencies": {},
+  "dependencies": {
+    "electron-is-dev": "^3.0.1"
+  },
   "devDependencies": {
     "@types/electron": "^1.6.12",
     "@types/node": "^22.14.1",
@@ -27,7 +30,6 @@
     "electron": "^35.1.5",
     "electron-builder": "^26.0.12",
     "electron-devtools-installer": "^4.0.0",
-    "electron-is-dev": "^3.0.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.1"
   },
@@ -39,7 +41,9 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "node_modules/**/*",
+      "package.json",
+      "webview-preload.js"
     ],
     "win": {
       "target": [

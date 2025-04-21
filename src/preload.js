@@ -1,8 +1,8 @@
 // 主窗口预加载脚本
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, app } = require('electron');
 
 // 检查是否为开发环境
-const isDev = process.env.IS_DEV === 'true';
+const isDev = process.env.IS_DEV === 'true' || false;
 
 // 向渲染进程暴露 Electron API
 contextBridge.exposeInMainWorld('electron', {

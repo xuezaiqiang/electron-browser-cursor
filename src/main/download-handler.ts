@@ -1,23 +1,16 @@
-import { app, dialog, ipcMain, BrowserWindow, WebContents, DownloadItem as ElectronDownloadItem } from 'electron';
+import { app, dialog, ipcMain, BrowserWindow, WebContents } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-
-interface DownloadInfo {
-  id: string;
-  url: string;
-  filename: string;
-  savePath: string;
-  item?: ElectronDownloadItem;
-}
 
 /**
  * 下载处理器类
  */
 export class DownloadHandler {
-  private activeDownloads: Map<string, DownloadInfo> = new Map();
+  private activeDownloads: Map<string, any>;
   private downloadDirectory: string;
 
   constructor() {
+    this.activeDownloads = new Map();
     this.downloadDirectory = path.join(app.getPath('downloads'), 'electron-browser');
     this.ensureDownloadDirectoryExists();
     this.setupIpcHandlers();
@@ -26,7 +19,7 @@ export class DownloadHandler {
   /**
    * 确保下载目录存在
    */
-  private ensureDownloadDirectoryExists(): void {
+  ensureDownloadDirectoryExists(): void {
     if (!fs.existsSync(this.downloadDirectory)) {
       fs.mkdirSync(this.downloadDirectory, { recursive: true });
     }
@@ -35,28 +28,28 @@ export class DownloadHandler {
   /**
    * 设置IPC处理程序
    */
-  private setupIpcHandlers(): void {
+  setupIpcHandlers(): void {
     // 开始下载
-    ipcMain.on('start-download', (event, downloadInfo: DownloadInfo) => {
-      const webContents = event.sender as WebContents;
+    ipcMain.on('start-download', (event: Electron.IpcMainEvent, downloadInfo: any) => {
+      const webContents = event.sender;
       this.startDownload(webContents, downloadInfo);
     });
 
     // 取消下载
-    ipcMain.on('cancel-download', (_, id: string) => {
+    ipcMain.on('cancel-download', (_: Electron.IpcMainEvent, id: string) => {
       this.cancelDownload(id);
     });
 
     // 暂停下载（Electron目前不支持暂停下载，所以这里实际上是取消下载）
-    ipcMain.on('pause-download', (_, id: string) => {
+    ipcMain.on('pause-download', (_: Electron.IpcMainEvent, id: string) => {
       this.cancelDownload(id);
     });
 
     // 恢复下载（Electron目前不支持恢复下载，所以这里实际上是重新开始下载）
-    ipcMain.on('resume-download', (event, id: string) => {
+    ipcMain.on('resume-download', (event: Electron.IpcMainEvent, id: string) => {
       const downloadInfo = this.activeDownloads.get(id);
       if (downloadInfo) {
-        const webContents = event.sender as WebContents;
+        const webContents = event.sender;
         this.startDownload(webContents, downloadInfo);
       }
     });
@@ -66,7 +59,7 @@ export class DownloadHandler {
    * 注册下载监听器
    */
   registerDownloadHandlers(window: BrowserWindow): void {
-    window.webContents.session.on('will-download', (_, item, webContents) => {
+    window.webContents.session.on('will-download', (_: Electron.Event, item: Electron.DownloadItem, webContents: WebContents) => {
       // 获取默认保存路径
       const filePath = path.join(this.downloadDirectory, item.getFilename());
       item.setSavePath(filePath);
@@ -75,7 +68,7 @@ export class DownloadHandler {
       const id = Date.now().toString();
 
       // 创建下载信息
-      const downloadInfo: DownloadInfo = {
+      const downloadInfo = {
         id,
         url: item.getURL(),
         filename: item.getFilename(),
@@ -127,14 +120,14 @@ export class DownloadHandler {
   /**
    * 开始下载
    */
-  private startDownload(webContents: WebContents, downloadInfo: DownloadInfo): void {
+  startDownload(webContents: WebContents, downloadInfo: any): void {
     webContents.downloadURL(downloadInfo.url);
   }
 
   /**
    * 取消下载
    */
-  private cancelDownload(id: string): void {
+  cancelDownload(id: string): void {
     const download = this.activeDownloads.get(id);
     
     if (download && download.item) {

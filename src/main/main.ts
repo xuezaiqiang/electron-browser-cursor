@@ -1,13 +1,17 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, shell, session } from 'electron';
-import * as path from 'path';
-import isDev from 'electron-is-dev';
-import { DownloadHandler } from './download-handler';
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, session } = require('electron');
+const path = require('path');
+// 删除原来的导入，改用条件判断
+// import isDev from 'electron-is-dev';
+const { DownloadHandler } = require('./download-handler');
 
 // 在应用启动前禁用可能导致警告的特性
 app.commandLine.appendSwitch('disable-features', 'Autofill,AutofillDrivers');
 
-let mainWindow: BrowserWindow | null = null;
-let downloadHandler: DownloadHandler;
+// 自定义判断是否为开发环境
+const isDev = !app.isPackaged;
+
+let mainWindow: import('electron').BrowserWindow | null = null;
+let downloadHandler: import('./download-handler').DownloadHandler;
 
 function createWindow() {
   // 创建浏览器窗口
@@ -27,15 +31,15 @@ function createWindow() {
     ? 'http://localhost:5173' 
     : `file://${path.join(__dirname, '../index.html')}`;
   
-  mainWindow.loadURL(indexUrl);
+  mainWindow!.loadURL(indexUrl);
 
   // 设置窗口打开处理器 - 拦截所有 window.open 调用
-  mainWindow.webContents.setWindowOpenHandler((details) => {
+  mainWindow!.webContents.setWindowOpenHandler((details) => {
     console.log('拦截到窗口打开请求:', details.url);
     
     // 将 URL 发送到渲染进程，在新标签中打开
     if (details.url && details.url !== 'about:blank') {
-      mainWindow?.webContents.send('open-url-in-new-tab', details.url);
+      mainWindow!.webContents.send('open-url-in-new-tab', details.url);
     }
     
     // 阻止默认行为
@@ -45,13 +49,13 @@ function createWindow() {
   // 打开开发者工具
   if (isDev) {
     // 以非默认方式打开DevTools，减少警告
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    mainWindow!.webContents.openDevTools({ mode: 'detach' });
     
     // 设置DevTools打开回调
-    mainWindow.webContents.on('devtools-opened', () => {
+    mainWindow!.webContents.on('devtools-opened', () => {
       // 发送消息到DevTools控制台，提供解决方案信息
       setTimeout(() => {
-        mainWindow?.webContents.devToolsWebContents?.executeJavaScript(`
+        mainWindow!.webContents.devToolsWebContents?.executeJavaScript(`
           console.log("%c可以忽略Autofill相关警告，这些不影响应用程序的功能", "color: green; font-weight: bold");
           
           // 重写console.error以过滤Autofill警告
@@ -70,7 +74,7 @@ function createWindow() {
   }
 
   // 当窗口关闭时取消引用
-  mainWindow.on('closed', () => {
+  mainWindow!.on('closed', () => {
     mainWindow = null;
   });
 
@@ -78,7 +82,7 @@ function createWindow() {
   if (!downloadHandler) {
     downloadHandler = new DownloadHandler();
   }
-  downloadHandler.registerDownloadHandlers(mainWindow);
+  downloadHandler.registerDownloadHandlers(mainWindow!);
 
   // 创建菜单
   const template = [
@@ -96,13 +100,13 @@ function createWindow() {
           label: '新建隐私浏览窗口',
           accelerator: 'CmdOrCtrl+Shift+N',
           click: () => {
-            mainWindow?.webContents.send('new-private-tab');
+            mainWindow!.webContents.send('new-private-tab');
           }
         },
         {
           label: '恢复上次会话',
           click: () => {
-            mainWindow?.webContents.send('restore-last-session');
+            mainWindow!.webContents.send('restore-last-session');
           }
         },
         { type: 'separator' },
@@ -150,14 +154,14 @@ function createWindow() {
           label: '查看历史记录',
           accelerator: 'CmdOrCtrl+H',
           click: () => {
-            mainWindow?.webContents.send('show-history');
+            mainWindow!.webContents.send('show-history');
           }
         },
         {
           label: '查看书签',
           accelerator: 'CmdOrCtrl+B',
           click: () => {
-            mainWindow?.webContents.send('show-bookmarks');
+            mainWindow!.webContents.send('show-bookmarks');
           }
         },
         { type: 'separator' },
@@ -165,7 +169,7 @@ function createWindow() {
           label: '添加书签',
           accelerator: 'CmdOrCtrl+D',
           click: () => {
-            mainWindow?.webContents.send('add-bookmark');
+            mainWindow!.webContents.send('add-bookmark');
           }
         }
       ]
@@ -177,7 +181,7 @@ function createWindow() {
           label: '查看下载',
           accelerator: 'CmdOrCtrl+J',
           click: () => {
-            mainWindow?.webContents.send('show-downloads');
+            mainWindow!.webContents.send('show-downloads');
           }
         },
         {
@@ -196,7 +200,7 @@ function createWindow() {
           label: '偏好设置',
           accelerator: 'CmdOrCtrl+,',
           click: () => {
-            mainWindow?.webContents.send('show-settings');
+            mainWindow!.webContents.send('show-settings');
           }
         }
       ]
@@ -247,7 +251,7 @@ app.on('window-all-closed', () => {
 });
 
 // 处理webview内容与主进程间的通信
-ipcMain.on('open-new-window', (_, url) => {
+ipcMain.on('open-new-window', (_: Electron.IpcMainEvent, url: string) => {
   console.log('主进程收到打开新窗口请求，URL:', url);
   const win = createWindow();
   // 如果提供了URL，在新窗口加载该URL
@@ -261,28 +265,28 @@ ipcMain.on('open-new-window', (_, url) => {
 });
 
 // 在默认浏览器中打开链接
-ipcMain.on('open-external-link', (_, url) => {
+ipcMain.on('open-external-link', (_: Electron.IpcMainEvent, url: string) => {
   shell.openExternal(url);
 });
 
 // 打开文件
-ipcMain.on('open-file', (_, filePath) => {
+ipcMain.on('open-file', (_: Electron.IpcMainEvent, filePath: string) => {
   shell.openPath(filePath);
 });
 
 // 在文件管理器中显示文件
-ipcMain.on('show-item-in-folder', (_, filePath) => {
+ipcMain.on('show-item-in-folder', (_: Electron.IpcMainEvent, filePath: string) => {
   shell.showItemInFolder(filePath);
 });
 
 // 获取下载路径
-ipcMain.on('get-downloads-path', (event) => {
+ipcMain.on('get-downloads-path', (event: Electron.IpcMainEvent) => {
   const downloadsPath = path.join(app.getPath('downloads'), 'electron-browser');
   event.reply('downloads-path', downloadsPath);
 });
 
 // 选择目录
-ipcMain.on('select-directory', async (event) => {
+ipcMain.on('select-directory', async (event: Electron.IpcMainEvent) => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory']
   });
@@ -295,14 +299,14 @@ ipcMain.on('select-directory', async (event) => {
 });
 
 // 设置下载路径
-ipcMain.on('set-download-path', (_, downloadPath) => {
+ipcMain.on('set-download-path', (_: Electron.IpcMainEvent, downloadPath: string) => {
   if (downloadHandler) {
     downloadHandler.setDownloadPath(downloadPath);
   }
 });
 
 // 设置代理
-ipcMain.on('set-proxy', (_, config) => {
+ipcMain.on('set-proxy', (_: Electron.IpcMainEvent, config: { server: string, port: number }) => {
   if (mainWindow) {
     const { server, port } = config;
     const proxyUrl = `http://${server}:${port}`;
@@ -311,7 +315,7 @@ ipcMain.on('set-proxy', (_, config) => {
       proxyRules: proxyUrl
     }).then(() => {
       console.log('代理设置成功:', proxyUrl);
-    }).catch(err => {
+    }).catch((err: Error) => {
       console.error('代理设置失败:', err);
     });
   }
@@ -323,13 +327,13 @@ ipcMain.on('disable-proxy', () => {
     proxyRules: ''
   }).then(() => {
     console.log('代理已禁用');
-  }).catch(err => {
+  }).catch((err: Error) => {
     console.error('禁用代理失败:', err);
   });
 });
 
 // 设置硬件加速
-ipcMain.on('set-hardware-acceleration', (_, enabled) => {
+ipcMain.on('set-hardware-acceleration', (_: Electron.IpcMainEvent, enabled: boolean) => {
   if (!enabled) {
     app.disableHardwareAcceleration();
     console.log('硬件加速已禁用');

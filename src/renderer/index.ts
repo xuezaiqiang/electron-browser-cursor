@@ -1,21 +1,39 @@
 // 不要直接导入Electron模块
-// import { ipcRenderer } from 'electron';
 import './style.css';
 import { BookmarkManager } from './bookmark-manager';
 import { HistoryManager } from './history-manager';
 import { DownloadManager } from './download-manager';
 import { SettingsManager } from './settings-manager';
 import * as PathHelper from './path-helper';
-import type { WebviewTag } from 'electron';
 
-// 从window对象获取预加载脚本中暴露的electron API
-const { ipcRenderer } = (window as any).electron || {
-  ipcRenderer: {
-    on: () => {},
-    send: () => {},
-    once: () => {},
-    removeAllListeners: () => {}
-  }
+// 定义WebviewTag接口，替代之前从electron导入的类型
+interface WebviewTag extends HTMLElement {
+  src: string;
+  preload: string;
+  nodeintegration: boolean;
+  webpreferences: string;
+  allowpopups: string;
+  useragent: string;
+  partition: string;
+  disablewebsecurity: boolean;
+  nativeWindowOpen: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  goBack(): void;
+  goForward(): void;
+  reload(): void;
+  // 添加其他需要的webview属性和方法
+}
+
+// 从window对象获取electron预加载脚本的API
+const electron = (window as any).electron;
+// 使用一个不同的名称避免重复声明
+const electronIpc = electron ? electron.ipcRenderer : {
+  on: () => {},
+  send: () => {},
+  invoke: () => Promise.resolve(),
+  once: () => {},
+  removeAllListeners: () => {}
 };
 
 // 将全局node_modules下的path替换为我们的pathHelper
@@ -74,6 +92,48 @@ interface CustomNewWindowEvent extends Event {
   preventDefault: () => void;
 }
 
+// 自定义接口定义
+interface BookmarkManagerType {
+  // 添加BookmarkManager的必要方法和属性
+  getAllBookmarks(): any[];
+  addBookmark(title: string, url: string): any;
+  removeBookmark(id: string): boolean;
+  isBookmarked(url: string): boolean;
+  getBookmarkByUrl(url: string): any;
+  // 其他需要的方法...
+}
+
+interface HistoryManagerType {
+  // 添加HistoryManager的必要方法和属性
+  addHistoryItem(title: string, url: string, favicon?: string): any;
+  getAllHistory(): any[];
+  getHistoryGroupedByDate(): any;
+  removeHistoryItem(id: string): void;
+  clearAllHistory(): void;
+  // 其他需要的方法...
+}
+
+interface DownloadManagerType {
+  // 添加DownloadManager的必要方法和属性
+  getAllDownloads(): any[];
+  getActiveDownloads(): any[];
+  getCompletedDownloads(): any[];
+  clearAllDownloadRecords(): void;
+  cancelDownload(id: string): void;
+  retryDownload(id: string): void;
+  resumeDownload(id: string): void;
+  removeDownloadRecord(id: string): void;
+  // 其他需要的方法...
+}
+
+interface SettingsManagerType {
+  getSettings(): any;
+  updateSettings(settings: any): void;
+  resetSettings(): void;
+  setSetting(key: string, value: any): void;
+  // 其他需要的方法...
+}
+
 class BrowserApp {
   private static readonly SESSION_STORAGE_KEY = 'electron-browser-session';
   private tabs: Tab[] = [];
@@ -84,10 +144,10 @@ class BrowserApp {
   private tabGroups: Map<string, TabGroup> = new Map(); // 标签分组管理
   
   // 管理器实例
-  private bookmarkManager: BookmarkManager;
-  private historyManager: HistoryManager;
-  private downloadManager: DownloadManager;
-  private settingsManager: SettingsManager;
+  private bookmarkManager: BookmarkManagerType;
+  private historyManager: HistoryManagerType;
+  private downloadManager: DownloadManagerType;
+  private settingsManager: SettingsManagerType;
 
   constructor() {
     this.tabList = document.getElementById('tab-list') as HTMLElement;
@@ -112,7 +172,7 @@ class BrowserApp {
     console.log('初始化链接行为设置');
     const settings = this.settingsManager.getSettings();
     settings.linkBehavior = 'new-tab';
-    this.settingsManager.updateSettings({ linkBehavior: 'new-tab' });
+    this.settingsManager.setSetting('linkBehavior', 'new-tab');
     console.log('设置链接行为为:', settings.linkBehavior);
   }
 
@@ -146,16 +206,16 @@ class BrowserApp {
     });
     
     // 主进程菜单事件监听
-    ipcRenderer.on('show-history', () => this.showHistory());
-    ipcRenderer.on('show-bookmarks', () => this.showBookmarks());
-    ipcRenderer.on('add-bookmark', () => this.addCurrentPageToBookmarks());
-    ipcRenderer.on('show-downloads', () => this.showDownloads());
-    ipcRenderer.on('show-settings', () => this.showSettings());
-    ipcRenderer.on('new-private-tab', () => this.createPrivateTab());
-    ipcRenderer.on('restore-last-session', () => this.restoreSession());
+    electronIpc.on('show-history', () => this.showHistory());
+    electronIpc.on('show-bookmarks', () => this.showBookmarks());
+    electronIpc.on('add-bookmark', () => this.addCurrentPageToBookmarks());
+    electronIpc.on('show-downloads', () => this.showDownloads());
+    electronIpc.on('show-settings', () => this.showSettings());
+    electronIpc.on('new-private-tab', () => this.createPrivateTab());
+    electronIpc.on('restore-last-session', () => this.restoreSession());
     
     // 处理主进程发送的打开URL请求
-    ipcRenderer.on('open-url-in-new-tab', (_: any, url: string) => {
+    electronIpc.on('open-url-in-new-tab', (_: any, url: string) => {
       console.log('收到在新标签页打开URL请求:', url);
       if (url && typeof url === 'string') {
         this.createNewTab(url);
@@ -163,7 +223,7 @@ class BrowserApp {
     });
     
     // 从新窗口加载URL
-    ipcRenderer.on('load-url', (_: any, url: string) => {
+    electronIpc.on('load-url', (_: any, url: string) => {
       console.log('收到load-url事件，URL:', url);
       if (url) {
         console.log('准备在新标签页中加载URL:', url);
@@ -318,7 +378,7 @@ class BrowserApp {
     
     if (!webview) {
       // 创建新webview
-      webview = document.createElement('webview') as WebviewTag;
+      webview = document.createElement('webview') as unknown as WebviewTag;
       webview.id = `webview-${tab.id}`;
       webview.className = 'browser-webview';
       webview.setAttribute('src', tab.url || '');
@@ -397,7 +457,25 @@ class BrowserApp {
         const url = e.url;
         console.log('拦截到 new-window 事件:', url);
         if (url && url !== 'about:blank') {
-          this.createNewTab(url);
+          // 根据用户设置决定链接行为
+          const settings = this.settingsManager.getSettings();
+          console.log('当前链接行为设置:', settings.linkBehavior);
+          
+          if (settings.linkBehavior === 'new-tab') {
+            this.createNewTab(url);
+          } else if (settings.linkBehavior === 'current-tab') {
+            const currentWebview = this.getCurrentWebview();
+            if (currentWebview) {
+              currentWebview.src = url;
+              // 更新当前标签页的URL
+              if (this.currentTabId) {
+                this.updateTabUrl(this.currentTabId, url);
+              }
+            }
+          } else if (settings.linkBehavior === 'new-window') {
+            // 在新窗口中打开
+            electronIpc.send('open-new-window', url);
+          }
         }
       });
       
@@ -626,9 +704,19 @@ class BrowserApp {
     }
   }
 
+  // 获取当前webview
   private getCurrentWebview(): WebviewTag | null {
-    if (!this.currentTabId) return null;
-    return document.getElementById(`webview-${this.currentTabId}`) as WebviewTag;
+    const activeTab = document.querySelector('.tab.active');
+    if (activeTab) {
+      const id = activeTab.id;
+      // 使用ID选择器查找webview元素
+      const webview = document.getElementById(`webview-${id}`);
+      if (webview) {
+        // 使用unknown作为中间类型安全地进行类型转换
+        return webview as unknown as WebviewTag;
+      }
+    }
+    return null;
   }
 
   private getCurrentUrl(): string {
@@ -643,14 +731,14 @@ class BrowserApp {
 
   private goBack(): void {
     const webview = this.getCurrentWebview();
-    if (webview && webview.canGoBack()) {
+    if (webview && webview.canGoBack) {
       webview.goBack();
     }
   }
 
   private goForward(): void {
     const webview = this.getCurrentWebview();
-    if (webview && webview.canGoForward()) {
+    if (webview && webview.canGoForward) {
       webview.goForward();
     }
   }
@@ -913,7 +1001,7 @@ class BrowserApp {
         dateGroup.appendChild(dateHeader);
         
         // 添加该日期的历史记录
-        historyGrouped[dateStr].forEach(item => {
+        historyGrouped[dateStr].forEach((item: {id: string, title: string, url: string, visitTime: number}) => {
           const historyItem = document.createElement('div');
           historyItem.className = 'history-item';
           
@@ -1211,14 +1299,14 @@ class BrowserApp {
       openButton.textContent = '打开';
       openButton.addEventListener('click', () => {
         // 使用shell.openPath打开文件
-        ipcRenderer.send('open-file', download.savePath);
+        electronIpc.send('open-file', download.savePath);
       });
       
       const showButton = document.createElement('button');
       showButton.textContent = '显示位置';
       showButton.addEventListener('click', () => {
         // 使用shell.showItemInFolder显示文件位置
-        ipcRenderer.send('show-item-in-folder', download.savePath);
+        electronIpc.send('show-item-in-folder', download.savePath);
       });
       
       actions.appendChild(openButton);
@@ -1573,13 +1661,17 @@ class BrowserApp {
       };
       
       // 更新设置
-      this.settingsManager.updateSettings(newSettings);
-      
-      // 显示保存成功消息
-      this.showNotification('设置已保存');
+      this.settingsManager.setSetting('linkBehavior', newSettings.linkBehavior);
+      this.settingsManager.setSetting('theme', newSettings.theme);
+      this.settingsManager.setSetting('showBookmarksBar', newSettings.showBookmarksBar);
+      this.settingsManager.setSetting('hardwareAcceleration', newSettings.hardwareAcceleration);
+      this.settingsManager.setSetting('proxySettings', newSettings.proxySettings);
       
       // 应用设置
       this.applySettings(newSettings);
+      
+      // 显示保存成功消息
+      this.showNotification('设置已保存');
     });
     
     const resetButton = document.createElement('button');
@@ -1650,8 +1742,8 @@ class BrowserApp {
         browseButton.type = 'button';
         browseButton.textContent = setting.buttonText || '浏览...';
         browseButton.addEventListener('click', () => {
-          ipcRenderer.send('select-directory');
-          ipcRenderer.once('selected-directory', (_: any, dir: string) => {
+          electronIpc.send('select-directory');
+          electronIpc.once('selected-directory', (_: any, dir: string) => {
             if (dir) {
               input.value = dir;
             }
@@ -1749,7 +1841,7 @@ class BrowserApp {
     // 应用代理设置
     if (settings.proxySettings.enabled) {
       // 向主进程发送代理设置
-      ipcRenderer.send('set-proxy', {
+      electronIpc.send('set-proxy', {
         server: settings.proxySettings.server,
         port: settings.proxySettings.port
       });
@@ -2309,4 +2401,7 @@ class BrowserApp {
 // 初始化应用
 document.addEventListener('DOMContentLoaded', () => {
   new BrowserApp();
-}); 
+});
+
+// 如果需要导出 BrowserApp 类
+export { BrowserApp }; 

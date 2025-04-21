@@ -199,4 +199,15 @@ export class SettingsManager {
       }
     });
   }
+  
+  /**
+   * 设置单个配置项
+   * @param key 配置项键名
+   * @param value 配置项值
+   */
+  setSetting(key: string, value: any): void {
+    // 使用类型断言确保TypeScript不会报错
+    (this.settings as any)[key] = value;
+    this.saveSettings();
+  }
 } 

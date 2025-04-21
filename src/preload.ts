@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+const { contextBridge, ipcRenderer } = require('electron');
 
 // 实现简单的path工具函数，不依赖Node.js的path模块
 const pathUtils = {
@@ -38,22 +38,26 @@ const pathUtils = {
   }
 };
 
+// 检查是否为开发环境
+const isDevMode = process.env.IS_DEV === 'true' || false;
+
 // 暴露安全的API给渲染进程
 contextBridge.exposeInMainWorld('electron', {
+  isDev: isDevMode,
   ipcRenderer: {
-    send: (channel: string, ...args: any[]) => {
+    send: (channel: string, ...args: any[]): void => {
       ipcRenderer.send(channel, ...args);
     },
-    on: (channel: string, listener: (...args: any[]) => void) => {
-      ipcRenderer.on(channel, (event, ...args) => listener(...args));
+    on: (channel: string, listener: (...args: any[]) => void): (() => void) => {
+      ipcRenderer.on(channel, (_event: any, ...args: any[]) => listener(...args));
       return () => {
         ipcRenderer.removeListener(channel, listener);
       };
     },
-    once: (channel: string, listener: (...args: any[]) => void) => {
-      ipcRenderer.once(channel, (event, ...args) => listener(...args));
+    once: (channel: string, listener: (...args: any[]) => void): void => {
+      ipcRenderer.once(channel, (_event: any, ...args: any[]) => listener(...args));
     },
-    removeAllListeners: (channel: string) => {
+    removeAllListeners: (channel: string): void => {
       ipcRenderer.removeAllListeners(channel);
     }
   },
