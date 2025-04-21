@@ -174,6 +174,15 @@ class BrowserApp {
     settings.linkBehavior = 'new-tab';
     this.settingsManager.setSetting('linkBehavior', 'new-tab');
     console.log('设置链接行为为:', settings.linkBehavior);
+
+    // 监听保存图片结果消息
+    electronIpc.on('save-image-result', (result: { success: boolean, path?: string, error?: string }) => {
+      if (result.success) {
+        this.showNotification('图片已保存');
+      } else {
+        this.showNotification(`保存图片失败: ${result.error || '未知错误'}`);
+      }
+    });
   }
 
   private initEventListeners(): void {
@@ -198,6 +207,9 @@ class BrowserApp {
     
     // 隐私浏览按钮
     document.getElementById('private-button')?.addEventListener('click', () => this.createPrivateTab());
+    
+    // 设置按钮
+    document.getElementById('settings-button')?.addEventListener('click', () => this.showSettings());
     
     // 全局错误处理，防止未处理的 Promise 拒绝
     window.addEventListener('unhandledrejection', (event) => {
@@ -384,8 +396,8 @@ class BrowserApp {
       webview.setAttribute('src', tab.url || '');
       webview.setAttribute('partition', 'persist:main');
       
-      // 关键配置
-      webview.setAttribute('webpreferences', 'contextIsolation=false,nodeIntegration=true');
+      // 设置更全面的权限配置
+      webview.setAttribute('webpreferences', 'contextIsolation=false,nodeIntegration=true,webviewTag=true,enableRemoteModule=true,allowRunningInsecureContent=true');
       
       // 禁用原生窗口打开，我们将用自己的方式处理
       webview.setAttribute('nativeWindowOpen', 'false');
@@ -428,6 +440,64 @@ class BrowserApp {
             }
           });
           
+          // 确保右键菜单在页面加载后仍能工作
+          // 创建全局事件监听器，捕获所有contextmenu事件
+          // 使用捕获阶段而不是冒泡阶段，确保先捕获到事件
+          document.addEventListener('contextmenu', function(e) {
+            // 阻止默认右键菜单和事件传播
+            e.preventDefault();
+            e.stopPropagation();
+            
+            console.log('页面内捕获到右键事件:', e.target);
+            
+            let contextInfo = {
+              type: 'default',
+              srcUrl: '',
+              linkUrl: '',
+              linkText: '',
+              selectedText: window.getSelection().toString()
+            };
+            
+            // 检查是否点击了图片
+            if (e.target.tagName === 'IMG') {
+              contextInfo.type = 'image';
+              contextInfo.srcUrl = e.target.src;
+            }
+            
+            // 检查是否点击了链接
+            let link = e.target;
+            while (link && link.tagName !== 'A') {
+              link = link.parentElement;
+            }
+            if (link) {
+              contextInfo.type = contextInfo.type === 'image' ? 'imageLink' : 'link';
+              contextInfo.linkUrl = link.href;
+              contextInfo.linkText = link.textContent || '';
+            }
+            
+            // 发送上下文信息
+            console.log('CONTEXT_MENU_INFO:' + JSON.stringify(contextInfo));
+            
+            // 在这里手动触发一个自定义事件，以便主进程捕获
+            var customEvent = new CustomEvent('show-context-menu', {
+              bubbles: true,
+              cancelable: true,
+              detail: {
+                pageX: e.pageX,
+                pageY: e.pageY,
+                clientX: e.clientX,
+                clientY: e.clientY,
+                contextInfo: contextInfo
+              }
+            });
+            document.dispatchEvent(customEvent);
+          }, true); // 使用捕获阶段
+          
+          // 在document上监听自定义事件，确保事件被传递
+          document.addEventListener('show-context-menu', function(e) {
+            console.log('自定义右键菜单事件已触发:', e.detail);
+          });
+          
           console.log('注入脚本已完成');
         `;
         
@@ -439,14 +509,111 @@ class BrowserApp {
         }
       });
       
-      // 监听控制台消息，接收注入脚本的请求
+      // 添加右键菜单
+      webview.addEventListener('contextmenu', (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('收到webview的右键菜单事件');
+        
+        // 添加调试信息
+        console.log('右键事件详情:', {
+          clientX: e.clientX,
+          clientY: e.clientY,
+          pageX: e.pageX,
+          pageY: e.pageY,
+          target: e.target
+        });
+        
+        // 直接显示简化版右键菜单
+        this.showWebViewContextMenu(tab.id, e);
+      });
+      
+      // 监听webview发出的自定义事件
+      webview.addEventListener('ipc-message', (e: any) => {
+        if (e.channel === 'context-menu') {
+          console.log('收到webview内部发送的context-menu事件:', e.args[0]);
+          
+          // 创建一个模拟的MouseEvent对象
+          const eventData = e.args[0];
+          const mouseEvent = {
+            preventDefault: () => {},
+            stopPropagation: () => {},
+            pageX: eventData.pageX || 0,
+            pageY: eventData.pageY || 0,
+            clientX: eventData.clientX || 0,
+            clientY: eventData.clientY || 0,
+            target: null
+          } as MouseEvent;
+          
+          // 保存上下文信息
+          (webview as any).contextInfo = eventData.contextInfo || {};
+          
+          // 显示右键菜单
+          this.showWebViewContextMenu(tab.id, mouseEvent);
+        }
+      });
+      
+      // 设置IPC事件通信
+      webview.addEventListener('dom-ready', () => {
+        try {
+          // 允许webview发送IPC消息
+          (webview as any).executeJavaScript(`
+            document.addEventListener('show-context-menu', function(e) {
+              // 使用内置的ipcRenderer发送消息到主进程
+              const detail = e.detail || {};
+              if (window.ipcRenderer) {
+                window.ipcRenderer.sendToHost('context-menu', detail);
+              } else {
+                // 回退方案：在控制台打印一个特殊格式的消息
+                console.log('CUSTOM_CONTEXT_MENU:' + JSON.stringify(detail));
+              }
+            });
+          `);
+        } catch (error) {
+          console.error('注入IPC事件脚本失败:', error);
+        }
+      });
+      
+      // 监听控制台消息，处理自定义上下文菜单信息
       webview.addEventListener('console-message', (e: any) => {
         const message = e.message || '';
-        if (message.startsWith('OPEN_URL:')) {
+        if (message.startsWith('CUSTOM_CONTEXT_MENU:')) {
+          try {
+            const detail = JSON.parse(message.substring('CUSTOM_CONTEXT_MENU:'.length));
+            console.log('通过控制台消息接收到右键菜单信息:', detail);
+            
+            // 创建一个模拟的MouseEvent对象
+            const mouseEvent = {
+              preventDefault: () => {},
+              stopPropagation: () => {},
+              pageX: detail.pageX || 0,
+              pageY: detail.pageY || 0,
+              clientX: detail.clientX || 0,
+              clientY: detail.clientY || 0,
+              target: null
+            } as MouseEvent;
+            
+            // 保存上下文信息
+            (webview as any).contextInfo = detail.contextInfo || {};
+            
+            // 显示右键菜单
+            this.showWebViewContextMenu(tab.id, mouseEvent);
+          } catch (error) {
+            console.error('解析CUSTOM_CONTEXT_MENU信息失败:', error);
+          }
+        } else if (message.startsWith('OPEN_URL:')) {
           const url = message.substring('OPEN_URL:'.length);
           console.log('收到打开URL请求:', url);
           if (url) {
             this.createNewTab(url);
+          }
+        } else if (message.startsWith('CONTEXT_MENU_INFO:')) {
+          try {
+            const contextInfo = JSON.parse(message.substring('CONTEXT_MENU_INFO:'.length));
+            // 将上下文信息存储到webview元素上，以便右键菜单使用
+            (webview as any).contextInfo = contextInfo;
+          } catch (error) {
+            console.error('解析上下文信息失败:', error);
           }
         }
       });
@@ -2395,6 +2562,411 @@ class BrowserApp {
         console.error('自动保存会话状态时出错:', error);
       }
     }, 5 * 60 * 1000);
+  }
+
+  /**
+   * 显示webview内容区域右键菜单
+   */
+  private showWebViewContextMenu(tabId: string, event: MouseEvent): void {
+    // 先移除任何现有菜单，避免重叠
+    const existingMenus = document.querySelectorAll('.webview-context-menu');
+    existingMenus.forEach(menu => {
+      if (document.body.contains(menu)) {
+        document.body.removeChild(menu);
+      }
+    });
+    
+    // 创建菜单
+    const menu = document.createElement('div');
+    menu.className = 'webview-context-menu';
+    
+    // 获取当前webview及上下文信息
+    const webview = document.getElementById(`webview-${tabId}`) as WebviewTag;
+    if (!webview) {
+      console.error('找不到webview元素:', tabId);
+      return;
+    }
+    
+    const contextInfo = (webview as any).contextInfo || {
+      type: 'default',
+      srcUrl: '',
+      linkUrl: '',
+      linkText: '',
+      selectedText: ''
+    };
+    
+    // 计算菜单位置，确保在视口内
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const menuWidth = 220; // 菜单宽度
+    const menuHeight = 300; // 估计的菜单高度
+    
+    // 安全检查 - 确保坐标是有效数字
+    let left = typeof event.pageX === 'number' ? event.pageX : 10;
+    let top = typeof event.pageY === 'number' ? event.pageY : 10;
+    
+    if (isNaN(left) || !isFinite(left) || left < 0) left = 10;
+    if (isNaN(top) || !isFinite(top) || top < 0) top = 10;
+    
+    // 确保菜单不会超出右边界
+    if (left + menuWidth > viewportWidth) {
+      left = viewportWidth - menuWidth - 5;
+    }
+    
+    // 确保菜单不会超出底部边界
+    if (top + menuHeight > viewportHeight) {
+      top = viewportHeight - menuHeight - 5;
+    }
+    
+    // 设置菜单位置
+    menu.style.position = 'fixed';
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.zIndex = '10000';
+    
+    // 添加到DOM - 先设置为不可见，然后一次性添加所有菜单项后再显示
+    menu.style.opacity = '0';
+    document.body.appendChild(menu);
+    
+    // 准备菜单项
+    const menuItems = this.getContextMenuItems(webview, contextInfo);
+    
+    // 创建菜单项的助手函数
+    menuItems.forEach(item => {
+      if (item.type === 'separator') {
+        const separator = document.createElement('div');
+        separator.className = 'webview-menu-separator';
+        menu.appendChild(separator);
+      } else {
+        const menuItem = document.createElement('div');
+        menuItem.className = 'webview-menu-item';
+        
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'webview-menu-item-icon';
+        iconSpan.textContent = item.icon || '';
+        
+        const textSpan = document.createElement('span');
+        textSpan.textContent = item.text;
+        
+        menuItem.appendChild(iconSpan);
+        menuItem.appendChild(textSpan);
+        
+        if (item.shortcut) {
+          const shortcutSpan = document.createElement('span');
+          shortcutSpan.className = 'webview-menu-item-shortcut';
+          shortcutSpan.textContent = item.shortcut;
+          menuItem.appendChild(shortcutSpan);
+        }
+        
+        if (item.disabled) {
+          menuItem.style.opacity = '0.5';
+          menuItem.style.cursor = 'default';
+        } else {
+          menuItem.addEventListener('click', () => {
+            this.closeContextMenu();
+            item.callback && item.callback();
+          });
+        }
+        
+        menu.appendChild(menuItem);
+      }
+    });
+    
+    // 点击其他区域关闭菜单
+    const closeHandler = (e: MouseEvent) => {
+      if (!menu.contains(e.target as Node)) {
+        this.closeContextMenu();
+      }
+    };
+    
+    // 只在下一帧添加点击监听，防止立即关闭
+    requestAnimationFrame(() => {
+      document.addEventListener('mousedown', closeHandler);
+      (menu as HTMLElement).dataset.closeHandler = 'active'; // 标记已添加事件处理
+      
+      // 显示菜单
+      menu.style.opacity = '1';
+    });
+  }
+  
+  /**
+   * 关闭上下文菜单
+   */
+  private closeContextMenu(): void {
+    const menus = document.querySelectorAll('.webview-context-menu');
+    menus.forEach(menu => {
+      if (document.body.contains(menu)) {
+        // 移除关联的事件监听器
+        if ((menu as HTMLElement).dataset.closeHandler === 'active') {
+          document.removeEventListener('mousedown', this.closeContextMenu);
+        }
+        document.body.removeChild(menu);
+      }
+    });
+  }
+  
+  /**
+   * 获取上下文菜单项目
+   */
+  private getContextMenuItems(webview: WebviewTag, contextInfo: any): any[] {
+    const items = [];
+    
+    // 1. 导航相关菜单项
+    items.push({ 
+      text: '返回', 
+      icon: '◀️', 
+      shortcut: 'Alt+←', 
+      disabled: !webview.canGoBack, 
+      callback: () => this.goBack() 
+    });
+    
+    items.push({ 
+      text: '前进', 
+      icon: '▶️', 
+      shortcut: 'Alt+→', 
+      disabled: !webview.canGoForward, 
+      callback: () => this.goForward() 
+    });
+    
+    items.push({ 
+      text: '刷新', 
+      icon: '🔄', 
+      shortcut: 'F5', 
+      callback: () => this.refresh() 
+    });
+    
+    items.push({ type: 'separator' });
+    
+    // 2. 根据上下文类型添加特定菜单项
+    
+    // 如果点击了链接
+    if (contextInfo.type === 'link' || contextInfo.type === 'imageLink') {
+      if (contextInfo.linkUrl) {
+        items.push({ 
+          text: '在新标签页中打开', 
+          icon: '📄', 
+          callback: () => this.createNewTab(contextInfo.linkUrl) 
+        });
+        
+        items.push({ 
+          text: '在隐私标签页中打开', 
+          icon: '🔒', 
+          callback: () => this.createPrivateTab(contextInfo.linkUrl) 
+        });
+        
+        items.push({ 
+          text: '复制链接地址', 
+          icon: '📋', 
+          callback: () => {
+            navigator.clipboard.writeText(contextInfo.linkUrl)
+              .then(() => this.showNotification('已复制链接地址'))
+              .catch(err => console.error('复制失败:', err));
+          }
+        });
+        
+        items.push({ type: 'separator' });
+      }
+    }
+    
+    // 如果点击了图片
+    if (contextInfo.type === 'image' || contextInfo.type === 'imageLink') {
+      if (contextInfo.srcUrl) {
+        items.push({ 
+          text: '在新标签页中查看图片', 
+          icon: '🖼️', 
+          callback: () => this.createNewTab(contextInfo.srcUrl) 
+        });
+        
+        items.push({ 
+          text: '复制图片', 
+          icon: '📋', 
+          callback: () => {
+            try {
+              // 在浏览器支持的情况下复制图片到剪贴板
+              const img = new Image();
+              img.src = contextInfo.srcUrl;
+              img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx?.drawImage(img, 0, 0);
+                
+                canvas.toBlob(blob => {
+                  if (blob) {
+                    try {
+                      const item = new ClipboardItem({ 'image/png': blob });
+                      navigator.clipboard.write([item])
+                        .then(() => this.showNotification('已复制图片'))
+                        .catch(() => this.showNotification('复制图片失败'));
+                    } catch (e) {
+                      // 如果ClipboardItem不支持，复制图片地址
+                      navigator.clipboard.writeText(contextInfo.srcUrl)
+                        .then(() => this.showNotification('设备不支持复制图片，已复制图片地址'))
+                        .catch(err => console.error('复制失败:', err));
+                    }
+                  }
+                });
+              };
+            } catch (e) {
+              // 兜底方案：复制图片URL
+              navigator.clipboard.writeText(contextInfo.srcUrl)
+                .then(() => this.showNotification('已复制图片地址'))
+                .catch(err => console.error('复制失败:', err));
+            }
+          }
+        });
+        
+        items.push({ 
+          text: '复制图片地址', 
+          icon: '🔗', 
+          callback: () => {
+            navigator.clipboard.writeText(contextInfo.srcUrl)
+              .then(() => this.showNotification('已复制图片地址'))
+              .catch(err => console.error('复制失败:', err));
+          }
+        });
+        
+        items.push({ 
+          text: '图片另存为...', 
+          icon: '💾', 
+          callback: () => {
+            const filename = contextInfo.srcUrl.split('/').pop() || 'image.jpg';
+            electronIpc.send('save-image', { url: contextInfo.srcUrl, filename });
+          }
+        });
+        
+        items.push({ type: 'separator' });
+      }
+    }
+    
+    // 如果有选中的文本
+    if (contextInfo.selectedText) {
+      items.push({ 
+        text: '复制', 
+        icon: '📋', 
+        shortcut: 'Ctrl+C', 
+        callback: () => {
+          navigator.clipboard.writeText(contextInfo.selectedText)
+            .then(() => this.showNotification('已复制文本'))
+            .catch(err => console.error('复制失败:', err));
+        }
+      });
+      
+      items.push({ 
+        text: '搜索"' + this.truncateText(contextInfo.selectedText, 20) + '"', 
+        icon: '🔍', 
+        callback: () => {
+          const searchEngine = this.settingsManager.getSettings().defaultSearchEngine || 'baidu';
+          let searchUrl;
+          
+          switch (searchEngine) {
+            case 'google':
+              searchUrl = `https://www.google.com/search?q=${encodeURIComponent(contextInfo.selectedText)}`;
+              break;
+            case 'bing':
+              searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(contextInfo.selectedText)}`;
+              break;
+            case 'baidu':
+            default:
+              searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent(contextInfo.selectedText)}`;
+              break;
+          }
+          
+          this.createNewTab(searchUrl);
+        }
+      });
+    } else {
+      // 基本剪贴板操作
+      items.push({ 
+        text: '复制', 
+        icon: '📋', 
+        shortcut: 'Ctrl+C', 
+        callback: () => {
+          try {
+            (webview as any).copy();
+          } catch (e) {
+            console.error('复制操作失败:', e);
+          }
+        }
+      });
+      
+      items.push({ 
+        text: '粘贴', 
+        icon: '📝', 
+        shortcut: 'Ctrl+V', 
+        callback: () => {
+          try {
+            (webview as any).paste();
+          } catch (e) {
+            console.error('粘贴操作失败:', e);
+          }
+        }
+      });
+      
+      items.push({ 
+        text: '全选', 
+        icon: '✅', 
+        shortcut: 'Ctrl+A', 
+        callback: () => {
+          try {
+            (webview as any).selectAll();
+          } catch (e) {
+            console.error('全选操作失败:', e);
+          }
+        }
+      });
+    }
+    
+    items.push({ type: 'separator' });
+    
+    // 页面操作
+    items.push({ 
+      text: '打印...', 
+      icon: '🖨️', 
+      shortcut: 'Ctrl+P', 
+      callback: () => {
+        try {
+          (webview as any).print();
+        } catch (e) {
+          console.error('打印操作失败:', e);
+        }
+      }
+    });
+    
+    items.push({ 
+      text: '查看页面源代码', 
+      icon: '📝', 
+      shortcut: 'Ctrl+U', 
+      callback: () => {
+        const url = webview.src;
+        this.createNewTab(`view-source:${url}`);
+      }
+    });
+    
+    items.push({ 
+      text: '检查元素', 
+      icon: '⚙️', 
+      shortcut: 'Ctrl+Shift+I', 
+      callback: () => {
+        try {
+          (webview as any).openDevTools();
+        } catch (e) {
+          console.error('打开开发者工具失败:', e);
+        }
+      }
+    });
+    
+    return items;
+  }
+  
+  /**
+   * 截断文本，用于显示选中内容
+   */
+  private truncateText(text: string, maxLength: number): string {
+    if (!text) return '';
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
   }
 }
 

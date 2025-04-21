@@ -13,6 +13,135 @@ const isDev = !app.isPackaged;
 let mainWindow: import('electron').BrowserWindow | null = null;
 let downloadHandler: import('./download-handler').DownloadHandler;
 
+// 处理右键菜单所需的IPC通信
+function setupIpcHandlers() {
+  // 处理保存页面请求
+  ipcMain.handle('save-page', async (event: Electron.IpcMainInvokeEvent, data: { url: string, filename: string }) => {
+    if (!mainWindow) return { success: false, error: 'Window not available' };
+    
+    try {
+      // 打开保存对话框
+      const { filePath } = await dialog.showSaveDialog(mainWindow, {
+        defaultPath: data.filename || 'webpage.html',
+        filters: [
+          { name: '网页', extensions: ['html', 'htm'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      });
+      
+      if (!filePath) return { success: false, error: 'User cancelled' };
+      
+      // 保存页面
+      const webContents = event.sender;
+      await webContents.savePage(filePath, 'HTMLComplete');
+      
+      return { success: true, path: filePath };
+    } catch (error: any) {
+      console.error('保存页面失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+  
+  // 处理打印页面请求
+  ipcMain.handle('print-page', async (event: Electron.IpcMainInvokeEvent) => {
+    try {
+      const webContents = event.sender;
+      await webContents.print();
+      return { success: true };
+    } catch (error: any) {
+      console.error('打印页面失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+  
+  // 处理保存对话框请求
+  ipcMain.handle('show-save-dialog', async (event: Electron.IpcMainInvokeEvent, options: Electron.SaveDialogOptions) => {
+    if (!mainWindow) return { canceled: true };
+    
+    try {
+      return await dialog.showSaveDialog(mainWindow, options);
+    } catch (error: any) {
+      console.error('显示保存对话框失败:', error);
+      return { canceled: true, error: error.message };
+    }
+  });
+  
+  // 剪贴板操作
+  ipcMain.on('copy-selection', (event: Electron.IpcMainEvent) => {
+    const webContents = event.sender;
+    webContents.copy();
+  });
+  
+  ipcMain.on('paste-selection', (event: Electron.IpcMainEvent) => {
+    const webContents = event.sender;
+    webContents.paste();
+  });
+  
+  ipcMain.on('cut-selection', (event: Electron.IpcMainEvent) => {
+    const webContents = event.sender;
+    webContents.cut();
+  });
+  
+  ipcMain.on('select-all', (event: Electron.IpcMainEvent) => {
+    const webContents = event.sender;
+    webContents.selectAll();
+  });
+
+  // 处理保存图片请求
+  ipcMain.on('save-image', async (event: Electron.IpcMainEvent, data: { url: string, filename: string }) => {
+    if (!mainWindow) return;
+    
+    try {
+      // 打开保存对话框
+      const { filePath } = await dialog.showSaveDialog(mainWindow, {
+        defaultPath: data.filename,
+        filters: [
+          { name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      });
+      
+      if (!filePath) return; // 用户取消
+      
+      // 使用fetch下载图片
+      const { net } = require('electron');
+      const fs = require('fs');
+      
+      const request = net.request(data.url);
+      request.on('response', (response: Electron.IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        
+        response.on('data', (chunk: Buffer) => {
+          chunks.push(Buffer.from(chunk));
+        });
+        
+        response.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          fs.writeFile(filePath, buffer, (err: Error) => {
+            if (err) {
+              console.error('保存图片失败:', err);
+              event.sender.send('save-image-result', { success: false, error: err.message });
+            } else {
+              console.log('图片已保存:', filePath);
+              event.sender.send('save-image-result', { success: true, path: filePath });
+            }
+          });
+        });
+      });
+      
+      request.on('error', (error: Error) => {
+        console.error('下载图片失败:', error);
+        event.sender.send('save-image-result', { success: false, error: error.message });
+      });
+      
+      request.end();
+    } catch (error: any) {
+      console.error('保存图片失败:', error);
+      event.sender.send('save-image-result', { success: false, error: error.message });
+    }
+  });
+}
+
 function createWindow() {
   // 创建浏览器窗口
   mainWindow = new BrowserWindow({
@@ -83,6 +212,9 @@ function createWindow() {
     downloadHandler = new DownloadHandler();
   }
   downloadHandler.registerDownloadHandlers(mainWindow!);
+  
+  // 初始化IPC处理程序
+  setupIpcHandlers();
 
   // 创建菜单
   const template = [

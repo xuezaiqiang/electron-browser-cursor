@@ -59,7 +59,42 @@ contextBridge.exposeInMainWorld('electron', {
     },
     removeAllListeners: (channel: string): void => {
       ipcRenderer.removeAllListeners(channel);
+    },
+    // 添加invoke支持，用于需要返回结果的IPC通信
+    invoke: (channel: string, ...args: any[]): Promise<any> => {
+      return ipcRenderer.invoke(channel, ...args);
     }
   },
-  path: pathUtils
+  path: pathUtils,
+  
+  // 添加文件操作相关方法
+  dialog: {
+    // 保存文件对话框
+    showSaveDialog: (options: any): Promise<any> => {
+      return ipcRenderer.invoke('show-save-dialog', options);
+    }
+  },
+  
+  // 添加网页相关操作
+  webContents: {
+    savePage: (url: string, filename: string): Promise<any> => {
+      return ipcRenderer.invoke('save-page', { url, filename });
+    },
+    print: (): Promise<any> => {
+      return ipcRenderer.invoke('print-page');
+    },
+    // 剪贴板操作
+    copy: (): void => {
+      ipcRenderer.send('copy-selection');
+    },
+    paste: (): void => {
+      ipcRenderer.send('paste-selection');
+    },
+    cut: (): void => {
+      ipcRenderer.send('cut-selection');
+    },
+    selectAll: (): void => {
+      ipcRenderer.send('select-all');
+    }
+  }
 }); 
